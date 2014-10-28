@@ -86,6 +86,12 @@ enum PixelFormatMode {
   BGR8Packed
 };
 
+enum ClockSourceMode {
+  Camera,
+  ROS,
+  Topic
+};
+
 enum AutoSettingMode {
   Off,
   Once,
@@ -122,6 +128,9 @@ class VimbaROS {
     std::string frame_id_;
     std::string trigger_source_;
     int trigger_source_int_;
+    ros::Time clock_offset;
+    int clock_source_int_;
+    VmbUint64_t tick_frequency_;
 
     // ROS messages
     typedef driver_base::SensorLevels Levels;
@@ -170,6 +179,7 @@ class VimbaROS {
     void updatePixelFormatConfig(const Config& config, FeaturePtrVector feature_ptr_vec);
     void updateGPIOConfig(const Config& config, FeaturePtrVector feature_ptr_vec);
     void updatePtpModeConfig(const Config& config, FeaturePtrVector feature_ptr_vec);
+    void updateClockSourceConfig(const Config& config, FeaturePtrVector feature_ptr_vec);
 
 
     void start(Config& config);
@@ -203,6 +213,8 @@ class VimbaROS {
     void printAllCameraFeatures(CameraPtr camera);
     // Dummy function to list all cameras
     void listAvailableCameras(void);
+    // Create a timestamp, based on the ClockSource configuration
+    ros::Time getROSTimestamp(const FramePtr& frame);
 };
 }
 

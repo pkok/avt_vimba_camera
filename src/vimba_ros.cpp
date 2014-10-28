@@ -66,6 +66,10 @@ static const char* PixelFormatMode[] = {
   "BayerRG12",
   "RGB8Packed",
   "BGR8Packed"};
+static const char* ClockSourceMode[] = {
+  "Camera",
+  "ROS",
+  "Topic"};
 static const char* BalanceRatioMode[] = {"Red", "Blue"};
 static const char* FeatureDataType[] = {"Unknown", "int", "float", "enum", "string", "bool"};
 
@@ -144,6 +148,7 @@ void VimbaROS::start(Config& config) {
   updateBandwidthConfig(config, feature_ptr_vec);
   updatePixelFormatConfig(config, feature_ptr_vec);
   updatePtpModeConfig(config, feature_ptr_vec);
+  updateClockSourceConfig(config, feature_ptr_vec);
   updateCameraInfo(config);
 
   /////////////////////////////////////////////////////////////////////////////
@@ -289,16 +294,10 @@ void VimbaROS::frameCallback(const FramePtr vimba_frame_ptr) {
   /// @todo Better trigger timestamp matching
   // if ( trigger_source_ == SyncIn1  && !trig_time_.isZero() ) {
 
-  VmbUint64_t timestamp;
-  vimba_frame_ptr->GetTimestamp(timestamp);
-  ROS_INFO_STREAM("[" << ros::this_node::getName() << "]: NEW_FRAME Timestamp: " << timestamp);
-
-  ros::Time ros_time;
-
   if(streaming_pub_.getNumSubscribers() > 0){
     if (frameToImage(vimba_frame_ptr, img)){
       img.header.frame_id = frame_id_.c_str();
-      cam_info_.header.stamp = img.header.stamp = ros_time.fromNSec(timestamp);
+      cam_info_.header.stamp = img.header.stamp = getROSTimestamp(vimba_frame_ptr);
       streaming_pub_.publish(img, cam_info_); // add timestamp
     }
   }
@@ -459,6 +458,7 @@ void VimbaROS::configure(Config& newconfig, uint32_t level) {
       updateBandwidthConfig(newconfig, feature_ptr_vec);
       updateGPIOConfig(newconfig, feature_ptr_vec);
       updatePtpModeConfig(newconfig, feature_ptr_vec);
+      updateClockSourceConfig(newconfig, feature_ptr_vec);
       updateCameraInfo(newconfig);
     }
     camera_config_ = newconfig;
@@ -820,6 +820,52 @@ void VimbaROS::updateGPIOConfig(const Config& config,
       << "\n\tSyncOutSource   : " << config.sync_out_source   << " was " << camera_config_.sync_out_source);
   }
 }
+
+
+void VimbaROS::updateClockSourceConfig(const Config& config, FeaturePtrVector feature_ptr_vec) {
+  bool changed = false;
+  if (config.clock_source != camera_config_.clock_source || first_run_) {
+    if (config.clock_source == ClockSourceMode[Camera]){
+      clock_source_int_ = Camera;
+    } else if (config.clock_source == ClockSourceMode[ROS]){
+      clock_source_int_ = ROS;
+    } else if (config.clock_source == ClockSourceMode[Topic]){
+      clock_source_int_ = Topic;
+    } else {
+      ROS_WARN_STREAM("Invalid ClockSource config: " << config.clock_source);
+      return;
+    }
+    changed = true;
+  }
+  if (changed){
+    if (clock_source_int_ == Camera) {
+      getFeatureValue("GevTimestampTickFrequency", tick_frequency_);
+      runCommand("GevTimestampControlReset");
+      clock_offset = ros::Time::now();
+      ROS_INFO_STREAM("New ClockSource config: "
+          << "\n\tClockSource : " << config.clock_source << " was " << camera_config_.clock_source
+          << "\n\tTick frequency : " << tick_frequency_ << " Hz");
+    }
+    else {
+      ROS_INFO_STREAM("New ClockSource config: "
+          << "\n\tClockSource : " << config.clock_source << " was " << camera_config_.clock_source);
+    }
+  }
+}
+
+ros::Time VimbaROS::getROSTimestamp(const FramePtr& frame) {
+  switch (clock_source_int_) {
+    case Camera:
+      VmbUint64_t ticks;
+      frame->GetTimestamp(ticks);
+      return clock_offset + ros::Duration(double(ticks) / tick_frequency_);
+    case Topic: // TODO: implement proper behavior for ClockSource == Topic
+    case ROS:
+    default:
+      return ros::Time::now();
+  }
+}
+
 
 // Template function to GET a feature value from the camera
 template<typename T>
